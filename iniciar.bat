@@ -1,0 +1,3 @@
+@echo off
+echo Iniciando Maquinado como administrador...
+powershell -Command "Start-Process python -ArgumentList '%~dp0Maquinado.py' -Verb RunAs -WorkingDirectory '%~dp0'"
