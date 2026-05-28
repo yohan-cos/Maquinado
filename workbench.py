@@ -104,6 +104,23 @@ class Workbench(tk.Tk):
                 activebackground=BG, activeforeground=TEXT
             ).pack(side="left", padx=(8, 0))
 
+        # --- Duração ---
+        dur_frame = tk.Frame(self, bg=BG, pady=4)
+        dur_frame.pack(fill="x", padx=16)
+
+        tk.Label(dur_frame, text="Duração (s):", font=tiny, bg=BG, fg=SUBTEXT).pack(side="left")
+
+        self.dur_var = tk.StringVar(value="60")
+        tk.Entry(
+            dur_frame, textvariable=self.dur_var,
+            font=tiny, bg=SURFACE, fg=TEXT,
+            insertbackground=TEXT, relief="flat",
+            width=5, justify="center"
+        ).pack(side="left", padx=(6, 10))
+
+        self.countdown_lbl = tk.Label(dur_frame, text="", font=tiny, bg=BG, fg=YELLOW)
+        self.countdown_lbl.pack(side="left")
+
         # --- Botões ---
         btn_frame = tk.Frame(self, bg=BG, pady=6)
         btn_frame.pack(fill="x", padx=16)
@@ -163,10 +180,26 @@ class Workbench(tk.Tk):
         label_source = self.src_var.get()
         collecting   = True
 
+        try:
+            self._remaining = max(1, int(self.dur_var.get()))
+        except ValueError:
+            self._remaining = 60
+
         self.status_dot.configure(fg=GREEN)
         self.status_lbl.configure(text=f"Coletando — {label_source}...")
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
+        self._tick()
+
+    def _tick(self):
+        if not collecting:
+            return
+        self.countdown_lbl.configure(text=f"⏱ {self._remaining}s restantes")
+        if self._remaining <= 0:
+            self._stop()
+            return
+        self._remaining -= 1
+        self.after(1000, self._tick)
 
     def _stop(self):
         global collecting
@@ -174,6 +207,7 @@ class Workbench(tk.Tk):
             return
         collecting = False
 
+        self.countdown_lbl.configure(text="")
         self.status_dot.configure(fg=SUBTEXT)
         self.status_lbl.configure(text="Coleta encerrada — gerando relatório...")
         self.stop_btn.configure(state="disabled")
