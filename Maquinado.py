@@ -9,6 +9,10 @@ import tkinter as tk
 from tkinter import font as tkfont
 import json
 import os
+import ctypes
+
+ctypes.windll.winmm.timeBeginPeriod(1)  # resolução do timer: 1ms (igual ao AHK)
+
 
 INTERVAL   = 0.5
 HOLD       = 0.08
@@ -29,6 +33,7 @@ toggle_hook_ref  = None
 toggle_hook_type = None
 toggle_key_info  = dict(DEFAULT_TOGGLE)
 capturing        = False
+stop_on_any_key  = True
 
 gui_queue = []
 gui_lock  = threading.Lock()
@@ -42,13 +47,14 @@ def push_event(event: dict):
 # --- Config ---
 
 def load_config():
-    global toggle_key_info, INTERVAL
+    global toggle_key_info, INTERVAL, stop_on_any_key
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
                 data = json.load(f)
             toggle_key_info = data.get("toggle_key", dict(DEFAULT_TOGGLE))
-            INTERVAL = data.get("interval_ms", 500) / 1000
+            INTERVAL        = data.get("interval_ms", 500) / 1000
+            stop_on_any_key = data.get("stop_on_any_key", True)
         except Exception:
             toggle_key_info = dict(DEFAULT_TOGGLE)
 
@@ -56,8 +62,9 @@ def load_config():
 def save_config():
     with open(CONFIG_FILE, "w") as f:
         json.dump({
-            "toggle_key":  toggle_key_info,
-            "interval_ms": int(INTERVAL * 1000)
+            "toggle_key":      toggle_key_info,
+            "interval_ms":     int(INTERVAL * 1000),
+            "stop_on_any_key": stop_on_any_key
         }, f, indent=2)
 
 
@@ -182,6 +189,9 @@ def move_loop():
         wake.wait()
         wake.clear()
 
+        start = time.perf_counter()
+        tick  = 0
+
         while True:
             with lock:
                 if not running:
@@ -194,7 +204,15 @@ def move_loop():
             keyboard.release(k)
             push_event({"type": "key", "key": k})
 
-            interrupted = wake.wait(timeout=INTERVAL - HOLD)
+            tick += 1
+            target    = start + tick * INTERVAL
+            remaining = target - time.perf_counter()
+
+            if remaining > 0:
+                interrupted = wake.wait(timeout=remaining)
+            else:
+                interrupted = wake.wait(timeout=0)
+
             if interrupted:
                 break
 
@@ -248,8 +266,12 @@ def stop_loop():
 def on_any_key(event):
     if not script_enabled or not running or capturing:
         return
+    if not stop_on_any_key:
+        return
     if event.event_type != keyboard.KEY_DOWN:
         return
+    if getattr(event, "injected", False):
+        return  # ignora teclas enviadas pelo próprio script
     if event.name not in ("w", "a", "s", "d"):
         stop_loop()
 
@@ -376,6 +398,31 @@ class App(tk.Tk):
             "Padrão: 500ms."
         )
 
+        # --- Parar ao pressionar qualquer tecla ---
+        guard_frame = tk.Frame(self, bg=BG, pady=4)
+        guard_frame.pack(fill="x", padx=16)
+
+        self.stop_on_key_var = tk.BooleanVar(value=stop_on_any_key)
+        guard_cb = tk.Checkbutton(
+            guard_frame,
+            text="Parar ao pressionar qualquer tecla",
+            variable=self.stop_on_key_var,
+            command=self._apply_stop_on_key,
+            bg=BG, fg=TEXT, selectcolor=SURFACE,
+            activebackground=BG, activeforeground=TEXT,
+            font=tiny, relief="flat", bd=0
+        )
+        guard_cb.pack(side="left")
+
+        guard_info = tk.Label(guard_frame, text="🔍", font=tiny, bg=BG, fg=SUBTEXT, cursor="hand2")
+        guard_info.pack(side="left", padx=(4, 0))
+        Tooltip(guard_info,
+            "Ativado: qualquer tecla fora do WASD\n"
+            "interrompe a execução.\n\n"
+            "Desativado: o loop continua mesmo com\n"
+            "outras teclas pressionadas."
+        )
+
         # --- Status loop ---
         status_frame = tk.Frame(self, bg=BG, pady=4)
         status_frame.pack(fill="x", padx=16)
@@ -425,6 +472,13 @@ class App(tk.Tk):
 
         self._active_key = None
         self.after(50, self._poll)
+
+    def _apply_stop_on_key(self):
+        global stop_on_any_key
+        stop_on_any_key = self.stop_on_key_var.get()
+        save_config()
+        estado = "ativado" if stop_on_any_key else "desativado"
+        self._log(f"⚙ Parar ao pressionar tecla: {estado}")
 
     def _apply_delay(self, _=None):
         global INTERVAL
